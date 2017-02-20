@@ -142,7 +142,7 @@ function create_network()
     table.insert(next_s, next_h)
     i[layer_idx] = next_h
   end
-  local h2y              = nn.Linear(params.rnn_size, params.vocab_size)
+  local h2y              = nn.Linear(params.rnn_size, symbolsManager.vocab_size)
   local dropped          = local_Dropout(i[params.layers], noise_o)
   local pred             = nn.LogSoftMax()(h2y(dropped))
   local err              = MaskedLoss()({pred, y})
