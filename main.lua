@@ -452,7 +452,11 @@ function show_predictions(state)
   for i = 1, state.data.x:size(1) - 1 do
     local tmp = model.rnns[1]:forward({state.data.x[state.pos],
                                               state.data.y[state.pos + 1],
-                                              model.s[0]})[2]
+                                              model.s[0],
+                                              model.noise_xe[i],
+                                              model.noise_i,
+                                              model.noise_h,
+                                              model.noise_o})[2]
     if params.gpuidx > 0 then
       cutorch.synchronize()
     end
@@ -511,10 +515,10 @@ function main()
             target_length=opt.target_length,
             target_nesting=opt.target_nesting,
             target_accuracy=0.95,
-            dropout_x=0.25,
-            dropout_i=0.75,
-            dropout_h=0.25,
-            dropout_o=0.75,
+            dropout_x=0.0,
+            dropout_i=0.0,
+            dropout_h=0.0,
+            dropout_o=0.0,
             current_length=1,
             current_nesting=1,
             recurrence_depth=10,
