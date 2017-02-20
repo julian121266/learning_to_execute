@@ -20,6 +20,58 @@ include "utils/strategies.lua"
 include "layers/MaskedLoss.lua"
 include "layers/Embedding.lua"
 
+local function rhn(x, prev_c, prev_h, noise_i, noise_h)
+  -- Reshape to (batch_size, n_gates, hid_size)
+  -- Then slice the n_gates dimension, i.e dimension 2
+  local reshaped_noise_i = nn.Reshape(2,params.rnn_size)(noise_i)
+  local reshaped_noise_h = nn.Reshape(2,params.rnn_size)(noise_h)
+  local sliced_noise_i   = nn.SplitTable(2)(reshaped_noise_i)
+  local sliced_noise_h   = nn.SplitTable(2)(reshaped_noise_h)
+  -- Calculate all two gates
+  local dropped_h_tab = {}
+  local h2h_tab = {}
+  local t_gate_tab = {}
+  local c_gate_tab = {}
+  local in_transform_tab = {}
+  local s_tab = {}
+  for layer_i = 1, params.recurrence_depth do
+    local i2h        = {}
+    h2h_tab[layer_i] = {}
+    if layer_i == 1 then
+      for i = 1, 2 do
+        -- Use select table to fetch each gate
+        local dropped_x         = local_Dropout(x, nn.SelectTable(i)(sliced_noise_i))
+        dropped_h_tab[layer_i]  = local_Dropout(prev_h, nn.SelectTable(i)(sliced_noise_h))
+        i2h[i]                  = nn.Linear(params.rnn_size, params.rnn_size)(dropped_x)
+        h2h_tab[layer_i][i]     = nn.Linear(params.rnn_size, params.rnn_size)(dropped_h_tab[layer_i])
+      end
+      t_gate_tab[layer_i]       = nn.Sigmoid()(nn.AddConstant(params.initial_bias, False)(nn.CAddTable()({i2h[1], h2h_tab[layer_i][1]})))
+      in_transform_tab[layer_i] = nn.Tanh()(nn.CAddTable()({i2h[2], h2h_tab[layer_i][2]}))
+      c_gate_tab[layer_i]       = nn.AddConstant(1,false)(nn.MulConstant(-1, false)(t_gate_tab[layer_i]))
+      s_tab[layer_i]           = nn.CAddTable()({
+        nn.CMulTable()({c_gate_tab[layer_i], prev_h}),
+        nn.CMulTable()({t_gate_tab[layer_i], in_transform_tab[layer_i]})
+      })
+    else
+      for i = 1, 2 do
+        -- Use select table to fetch each gate
+        dropped_h_tab[layer_i]  = local_Dropout(s_tab[layer_i-1], nn.SelectTable(i)(sliced_noise_h))
+        h2h_tab[layer_i][i]     = nn.Linear(params.rnn_size, params.rnn_size)(dropped_h_tab[layer_i])
+      end
+      t_gate_tab[layer_i]       = nn.Sigmoid()(nn.AddConstant(params.initial_bias, False)(h2h_tab[layer_i][1]))
+      in_transform_tab[layer_i] = nn.Tanh()(h2h_tab[layer_i][2])
+      c_gate_tab[layer_i]       = nn.AddConstant(1,false)(nn.MulConstant(-1, false)(t_gate_tab[layer_i]))
+      s_tab[layer_i]           = nn.CAddTable()({
+        nn.CMulTable()({c_gate_tab[layer_i], s_tab[layer_i-1]}),
+        nn.CMulTable()({t_gate_tab[layer_i], in_transform_tab[layer_i]})
+      })
+    end
+  end
+  local next_h = s_tab[params.recurrence_depth]
+  local next_c = prev_c
+  return next_c, next_h
+end
+
 function lstm(i, prev_c, prev_h)
   function new_input_sum()
     local i2h            = nn.Linear(params.rnn_size, params.rnn_size)
@@ -38,67 +90,198 @@ function lstm(i, prev_c, prev_h)
   return next_c, next_h
 end
 
-function create_network()
+local function transfer_data(x)
+  return x:cuda()
+end
+
+local function local_Dropout(input, noise)
+  return nn.CMulTable()({input, noise})
+end
+
+local function create_network()
   local x                = nn.Identity()()
   local y                = nn.Identity()()
   local prev_s           = nn.Identity()()
-  local i                = {[0] = Embedding(symbolsManager.vocab_size,
-                                            params.rnn_size)(x)}
+  local noise_x          = nn.Identity()()
+  local noise_i          = nn.Identity()()
+  local noise_h          = nn.Identity()()
+  local noise_o          = nn.Identity()()
+  local i                = {[0] = LookupTable(params.vocab_size,
+                                              params.rnn_size)(x)}
+  i[0] = local_Dropout(i[0], noise_x)
   local next_s           = {}
-  local splitted         = {prev_s:split(2 * params.layers)}
+  local split            = {prev_s:split(2 * params.layers)}
+  local noise_i_split    = {noise_i:split(params.layers)}
+  local noise_h_split    = {noise_h:split(params.layers)}
   for layer_idx = 1, params.layers do
-    local prev_c         = splitted[2 * layer_idx - 1]
-    local prev_h         = splitted[2 * layer_idx]
-    local dropped        = nn.Dropout()(i[layer_idx - 1])       
-    local next_c, next_h = lstm(dropped, prev_c, prev_h)
+    local prev_c         = split[2 * layer_idx - 1]
+    local prev_h         = split[2 * layer_idx]
+    local n_i            = noise_i_split[layer_idx]
+    local n_h            = noise_h_split[layer_idx]
+    local next_c, next_h = rhn(i[layer_idx - 1], prev_c, prev_h, n_i, n_h)
     table.insert(next_s, next_c)
     table.insert(next_s, next_h)
     i[layer_idx] = next_h
   end
-  local h2y              = nn.Linear(params.rnn_size, symbolsManager.vocab_size)
-  local pred             = nn.LogSoftMax()(h2y(i[params.layers]))
+  local h2y              = nn.Linear(params.rnn_size, params.vocab_size)
+  local dropped          = local_Dropout(i[params.layers], noise_o)
+  local pred             = nn.LogSoftMax()(h2y(dropped))
   local err              = MaskedLoss()({pred, y})
-  local module           = nn.gModule({x, y, prev_s},
+  local module           = nn.gModule({x, y, prev_s, noise_x, noise_i, noise_h, noise_o},
                                       {err, nn.Identity()(next_s)})
   module:getParameters():uniform(-params.init_weight, params.init_weight)
-  if params.gpuidx > 0 then
-    return module:cuda()
-  else
-    return module
-  end
+  return transfer_data(module)
 end
 
-function setup()
-  print("Creating a RNN LSTM network.")
+--function create_network()
+--  local x                = nn.Identity()()
+--  local y                = nn.Identity()()
+--  local prev_s           = nn.Identity()()
+--  local i                = {[0] = Embedding(symbolsManager.vocab_size,
+--                                            params.rnn_size)(x)}
+--  local next_s           = {}
+--  local splitted         = {prev_s:split(2 * params.layers)}
+--  for layer_idx = 1, params.layers do
+--    local prev_c         = splitted[2 * layer_idx - 1]
+--    local prev_h         = splitted[2 * layer_idx]
+--    local dropped        = nn.Dropout()(i[layer_idx - 1])
+--    local next_c, next_h = lstm(dropped, prev_c, prev_h)
+--    table.insert(next_s, next_c)
+--    table.insert(next_s, next_h)
+--    i[layer_idx] = next_h
+--  end
+--  local h2y              = nn.Linear(params.rnn_size, symbolsManager.vocab_size)
+--  local pred             = nn.LogSoftMax()(h2y(i[params.layers]))
+--  local err              = MaskedLoss()({pred, y})
+--  local module           = nn.gModule({x, y, prev_s},
+--                                      {err, nn.Identity()(next_s)})
+--  module:getParameters():uniform(-params.init_weight, params.init_weight)
+--  if params.gpuidx > 0 then
+--    return module:cuda()
+--  else
+--    return module
+--  end
+--end
+
+local function setup()
+  print("Creating an RHN network.")
   local core_network = create_network()
   paramx, paramdx = core_network:getParameters()
-  model = {}
   model.s = {}
   model.ds = {}
   model.start_s = {}
   for j = 0, params.seq_length do
     model.s[j] = {}
     for d = 1, 2 * params.layers do
-      model.s[j][d] = torch.zeros(params.batch_size, params.rnn_size)
-      if params.gpuidx > 0 then
-        model.s[j][d] = model.s[j][d]:cuda()
-      end
-
+      model.s[j][d] = transfer_data(torch.zeros(params.batch_size, params.rnn_size))
     end
   end
   for d = 1, 2 * params.layers do
-    model.start_s[d] = torch.zeros(params.batch_size, params.rnn_size)
-    model.ds[d] = torch.zeros(params.batch_size, params.rnn_size)
-    if params.gpuidx > 0 then
-      model.start_s[d] = model.start_s[d]:cuda()
-      model.ds[d] = model.ds[d]:cuda()
+    model.start_s[d] = transfer_data(torch.zeros(params.batch_size, params.rnn_size))
+    model.ds[d] = transfer_data(torch.zeros(params.batch_size, params.rnn_size))
+  end
+
+  model.noise_i = {}
+  model.noise_x = {}
+  model.noise_xe = {}
+  for j = 1, params.seq_length do
+    model.noise_x[j] = transfer_data(torch.zeros(params.batch_size, 1))
+    model.noise_xe[j] = torch.expand(model.noise_x[j], params.batch_size, params.rnn_size)
+    model.noise_xe[j] = transfer_data(model.noise_xe[j])
+  end
+  model.noise_h = {}
+  for d = 1, params.layers do
+    model.noise_i[d] = transfer_data(torch.zeros(params.batch_size, 2 * params.rnn_size))
+    model.noise_h[d] = transfer_data(torch.zeros(params.batch_size, 2 * params.rnn_size))
+  end
+  model.noise_o = transfer_data(torch.zeros(params.batch_size, params.rnn_size))
+  model.core_network = core_network
+  model.rnns = g_cloneManyTimes(core_network, params.seq_length)
+  model.norm_dw = 0
+  model.err = transfer_data(torch.zeros(params.seq_length))
+
+  model.pred = {}
+  for j = 1, params.seq_length do
+    model.pred[j] = transfer_data(torch.zeros(params.batch_size, params.vocab_size))
+  end
+  local y                = nn.Identity()()
+  local pred             = nn.Identity()()
+  local err              = nn.ClassNLLCriterion()({pred, y})
+  model.test             = transfer_data(nn.gModule({y, pred}, {err}))
+end
+
+-- convenience functions to handle noise
+local function sample_noise(state)
+  for i = 1, params.seq_length do
+    model.noise_x[i]:bernoulli(1 - params.dropout_x)
+    model.noise_x[i]:div(1 - params.dropout_x)
+  end
+
+  for b = 1, params.batch_size do
+    for i = 1, params.seq_length do
+      local x = state.data[state.pos + i - 1]
+      for j = i+1, params.seq_length do
+        if state.data[state.pos + j - 1] == x then
+          model.noise_x[j][b] = model.noise_x[i][b]
+          -- we only need to override the first time; afterwards subsequent are copied:
+          break
+        end
+      end
     end
   end
-  model.core_network = core_network
-  model.rnns = cloneManyTimes(core_network, params.seq_length)
-  model.norm_dw = 0
-  reset_ds()
+  for d = 1, params.layers do
+    model.noise_i[d]:bernoulli(1 - params.dropout_i)
+    model.noise_i[d]:div(1 - params.dropout_i)
+    model.noise_h[d]:bernoulli(1 - params.dropout_h)
+    model.noise_h[d]:div(1 - params.dropout_h)
+  end
+  model.noise_o:bernoulli(1 - params.dropout_o)
+  model.noise_o:div(1 - params.dropout_o)
 end
+
+local function reset_noise()
+  for j = 1, params.seq_length do
+    model.noise_x[j]:zero():add(1)
+  end
+  for d = 1, params.layers do
+    model.noise_i[d]:zero():add(1)
+    model.noise_h[d]:zero():add(1)
+  end
+  model.noise_o:zero():add(1)
+end
+
+
+--function setup()
+--  print("Creating a RNN LSTM network.")
+--  local core_network = create_network()
+--  paramx, paramdx = core_network:getParameters()
+--  model = {}
+--  model.s = {}
+--  model.ds = {}
+--  model.start_s = {}
+--  for j = 0, params.seq_length do
+--    model.s[j] = {}
+--    for d = 1, 2 * params.layers do
+--      model.s[j][d] = torch.zeros(params.batch_size, params.rnn_size)
+--      if params.gpuidx > 0 then
+--        model.s[j][d] = model.s[j][d]:cuda()
+--      end
+--
+--    end
+--  end
+--  for d = 1, 2 * params.layers do
+--    model.start_s[d] = torch.zeros(params.batch_size, params.rnn_size)
+--    model.ds[d] = torch.zeros(params.batch_size, params.rnn_size)
+--    if params.gpuidx > 0 then
+--      model.start_s[d] = model.start_s[d]:cuda()
+--      model.ds[d] = model.ds[d]:cuda()
+--    end
+--  end
+--  model.core_network = core_network
+--  model.rnns = cloneManyTimes(core_network, params.seq_length)
+--  model.norm_dw = 0
+--  reset_ds()
+--end
 
 function reset_state(state)
   load_data(state)
