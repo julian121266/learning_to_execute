@@ -125,8 +125,8 @@ local function create_network()
   local noise_i          = nn.Identity()()
   local noise_h          = nn.Identity()()
   local noise_o          = nn.Identity()()
-  local i                = {[0] = LookupTable(params.vocab_size,
-                                              params.rnn_size)(x)}
+  local i                = {[0] = Embedding(symbolsManager.vocab_size,
+                                            params.rnn_size)(x)}
   i[0] = local_Dropout(i[0], noise_x)
   local next_s           = {}
   local split            = {prev_s:split(2 * params.layers)}
@@ -439,7 +439,7 @@ function main()
 
   params = {batch_size=100,
             seq_length=50,
-            layers=2,
+            layers=1, --2
             rnn_size=400,
             init_weight=0.08,
             learningRate=0.5,
@@ -447,9 +447,35 @@ function main()
             target_length=opt.target_length,
             target_nesting=opt.target_nesting,
             target_accuracy=0.95,
+            dropout_x=0.25,
+            dropout_i=0.75,
+            dropout_h=0.25,
+            dropout_o=0.75,
             current_length=1,
             current_nesting=1,
-            gpuidx = opt.gpuidx}
+            recurrence_depth=10,
+            initial_bias=-4,
+            gpuidx = opt.gpuidx }
+
+
+--  local params = {batch_size=20,
+--                seq_length=35,
+--                layers=1,
+--                decay=1.02,
+--                rnn_size=1000,
+--                dropout_x=0.25,
+--                dropout_i=0.75,
+--                dropout_h=0.25,
+--                dropout_o=0.75,
+--                init_weight=0.04,
+--                lr=0.2,
+--                vocab_size=10000,
+--                max_epoch=20,
+--                max_max_epoch=1000,
+--                max_grad_norm=10,
+--                weight_decay=1e-7,
+--                recurrence_depth=10,
+--                initial_bias=-4}
 
   init_gpu(opt.gpuidx)
   state_train = {hardness=_G[opt.strategy],
