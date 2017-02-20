@@ -219,7 +219,7 @@ function setup()
   end
   model.noise_o = transfer_data(torch.zeros(params.batch_size, params.rnn_size))
   model.core_network = core_network
-  model.rnns = g_cloneManyTimes(core_network, params.seq_length)
+  model.rnns = cloneManyTimes(core_network, params.seq_length) --g_cloneManyTimes(core_network, params.seq_length)
   model.norm_dw = 0
   model.err = transfer_data(torch.zeros(params.seq_length))
 
