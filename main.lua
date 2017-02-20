@@ -478,8 +478,8 @@ function main()
 
   params = {batch_size=100,
             seq_length=50,
-            layers=1, --2
-            rnn_size=400,
+            layers=2, --2
+            rnn_size=600,
             init_weight=0.08,
             weight_decay=0.0,
             learningRate=0.5,
@@ -493,7 +493,7 @@ function main()
             dropout_o=0.0,
             current_length=1,
             current_nesting=1,
-            recurrence_depth=10,
+            recurrence_depth=5,
             initial_bias=-4,
             gpuidx = opt.gpuidx }
 
