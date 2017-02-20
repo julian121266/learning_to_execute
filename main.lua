@@ -325,50 +325,97 @@ function reset_ds()
   end
 end
 
-function fp(state, paramx_)
-  if paramx_ ~= paramx then paramx:copy(paramx_) end
-  copy_table(model.s[0], model.start_s)
-  if state.pos + params.seq_length > state.data.x:size(1) then
+
+local function fp(state)
+  g_replace_table(model.s[0], model.start_s)
+  if state.pos + params.seq_length > state.data:size(1) then
     reset_state(state)
   end
+
+  if disable_dropout then reset_noise() else sample_noise(state) end
   for i = 1, params.seq_length do
-    tmp, model.s[i] = unpack(model.rnns[i]:forward({state.data.x[state.pos],
-                                                    state.data.y[state.pos + 1],
-                                                    model.s[i - 1]}))
-    if params.gpuidx > 0 then
-      cutorch.synchronize()
-    end
+    local x = state.data[state.pos]
+    local y = state.data[state.pos + 1]
+    local s = model.s[i - 1]
+    model.err[i], model.s[i] = unpack(model.rnns[i]:forward(
+      {x, y, s, model.noise_xe[i], model.noise_i, model.noise_h, model.noise_o}))
     state.pos = state.pos + 1
-    state.count = state.count + tmp[2]
-    state.normal = state.normal + tmp[3]
   end
-  state.acc = state.count / state.normal
-  copy_table(model.start_s, model.s[params.seq_length])
+  g_replace_table(model.start_s, model.s[params.seq_length])
+  return model.err
 end
 
-function bp(state)
+--function fp(state, paramx_)
+--  if paramx_ ~= paramx then paramx:copy(paramx_) end
+--  copy_table(model.s[0], model.start_s)
+--  if state.pos + params.seq_length > state.data.x:size(1) then
+--    reset_state(state)
+--  end
+--  for i = 1, params.seq_length do
+--    tmp, model.s[i] = unpack(model.rnns[i]:forward({state.data.x[state.pos],
+--                                                    state.data.y[state.pos + 1],
+--                                                    model.s[i - 1]}))
+--    if params.gpuidx > 0 then
+--      cutorch.synchronize()
+--    end
+--    state.pos = state.pos + 1
+--    state.count = state.count + tmp[2]
+--    state.normal = state.normal + tmp[3]
+--  end
+--  state.acc = state.count / state.normal
+--  copy_table(model.start_s, model.s[params.seq_length])
+--end
+
+local function bp(state)
   paramdx:zero()
   reset_ds()
-  local tmp_val
-  if params.gpuidx > 0 then tmp_val = torch.ones(1):cuda() else tmp_val = torch.ones(1) end
   for i = params.seq_length, 1, -1 do
     state.pos = state.pos - 1
-    local tmp = model.rnns[i]:backward({state.data.x[state.pos],
-                                        state.data.y[state.pos + 1],
-                                        model.s[i - 1]},
-                                        { tmp_val, model.ds})[3]
-    copy_table(model.ds, tmp)
-    if params.gpuidx > 0 then
-      cutorch.synchronize()
-    end
+    local x = state.data[state.pos]
+    local y = state.data[state.pos + 1]
+    local s = model.s[i - 1]
+    local derr = transfer_data(torch.ones(1))
+    local tmp = model.rnns[i]:backward( -- Yarin: do we need model.noise_x[i+1]?
+      {x, y, s, model.noise_xe[i], model.noise_i, model.noise_h, model.noise_o},
+      {derr, model.ds})[3]
+    g_replace_table(model.ds, tmp)
+    cutorch.synchronize()
   end
   state.pos = state.pos + params.seq_length
   model.norm_dw = paramdx:norm()
   if model.norm_dw > params.max_grad_norm then
-    shrink_factor = params.max_grad_norm / model.norm_dw
+    local shrink_factor = params.max_grad_norm / model.norm_dw
     paramdx:mul(shrink_factor)
   end
+  paramx:add(paramdx:mul(-params.lr))
+  paramx:add(-params.weight_decay, paramx)
 end
+
+
+
+--function bp(state)
+--  paramdx:zero()
+--  reset_ds()
+--  local tmp_val
+--  if params.gpuidx > 0 then tmp_val = torch.ones(1):cuda() else tmp_val = torch.ones(1) end
+--  for i = params.seq_length, 1, -1 do
+--    state.pos = state.pos - 1
+--    local tmp = model.rnns[i]:backward({state.data.x[state.pos],
+--                                        state.data.y[state.pos + 1],
+--                                        model.s[i - 1]},
+--                                        { tmp_val, model.ds})[3]
+--    copy_table(model.ds, tmp)
+--    if params.gpuidx > 0 then
+--      cutorch.synchronize()
+--    end
+--  end
+--  state.pos = state.pos + params.seq_length
+--  model.norm_dw = paramdx:norm()
+--  if model.norm_dw > params.max_grad_norm then
+--    shrink_factor = params.max_grad_norm / model.norm_dw
+--    paramdx:mul(shrink_factor)
+--  end
+--end
 
 function eval_training(paramx_)
   fp(state_train, paramx_)
@@ -446,6 +493,7 @@ function main()
             layers=1, --2
             rnn_size=400,
             init_weight=0.08,
+            weight_decay=0.0,
             learningRate=0.5,
             max_grad_norm=5,
             target_length=opt.target_length,
