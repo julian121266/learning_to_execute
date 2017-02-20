@@ -225,7 +225,7 @@ function setup()
 
   model.pred = {}
   for j = 1, params.seq_length do
-    model.pred[j] = transfer_data(torch.zeros(params.batch_size, params.vocab_size))
+    model.pred[j] = transfer_data(torch.zeros(params.batch_size, symbolsManager.vocab_size))
   end
   local y                = nn.Identity()()
   local pred             = nn.Identity()()
