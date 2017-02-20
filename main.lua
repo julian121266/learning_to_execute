@@ -20,6 +20,25 @@ include "utils/strategies.lua"
 include "layers/MaskedLoss.lua"
 include "layers/Embedding.lua"
 
+local ok,cunn = pcall(require, 'fbcunn')
+if not ok then
+    ok,cunn = pcall(require,'cunn')
+    if ok then
+        print("warning: fbcunn not found. Falling back to cunn")
+        LookupTable = nn.LookupTable
+    else
+        print("Could not find cunn or fbcunn. Either is required")
+        os.exit()
+    end
+else
+    deviceParams = cutorch.getDeviceProperties(1)
+    cudaComputeCapability = deviceParams.major + deviceParams.minor/10
+    LookupTable = nn.LookupTable
+end
+require('nngraph')
+require('base')
+
+
 local function rhn(x, prev_c, prev_h, noise_i, noise_h)
   -- Reshape to (batch_size, n_gates, hid_size)
   -- Then slice the n_gates dimension, i.e dimension 2
