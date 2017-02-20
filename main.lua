@@ -39,7 +39,7 @@ require('nngraph')
 require('base')
 
 
-local function rhn(x, prev_c, prev_h, noise_i, noise_h)
+function rhn(x, prev_c, prev_h, noise_i, noise_h)
   -- Reshape to (batch_size, n_gates, hid_size)
   -- Then slice the n_gates dimension, i.e dimension 2
   local reshaped_noise_i = nn.Reshape(2,params.rnn_size)(noise_i)
@@ -109,15 +109,15 @@ function lstm(i, prev_c, prev_h)
   return next_c, next_h
 end
 
-local function transfer_data(x)
+function transfer_data(x)
   return x:cuda()
 end
 
-local function local_Dropout(input, noise)
+function local_Dropout(input, noise)
   return nn.CMulTable()({input, noise})
 end
 
-local function create_network()
+function create_network()
   local x                = nn.Identity()()
   local y                = nn.Identity()()
   local prev_s           = nn.Identity()()
@@ -182,7 +182,7 @@ end
 --  end
 --end
 
-local function setup()
+function setup()
   print("Creating an RHN network.")
   local core_network = create_network()
   paramx, paramdx = core_network:getParameters()
