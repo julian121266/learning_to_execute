@@ -327,7 +327,7 @@ end
 
 
 local function fp(state)
-  g_replace_table(model.s[0], model.start_s)
+  copy_table(model.s[0], model.start_s) -- g_replace_table
   if state.pos + params.seq_length > state.data:size(1) then
     reset_state(state)
   end
@@ -341,7 +341,7 @@ local function fp(state)
       {x, y, s, model.noise_xe[i], model.noise_i, model.noise_h, model.noise_o}))
     state.pos = state.pos + 1
   end
-  g_replace_table(model.start_s, model.s[params.seq_length])
+  copy_table(model.start_s, model.s[params.seq_length])
   return model.err
 end
 
@@ -378,7 +378,7 @@ local function bp(state)
     local tmp = model.rnns[i]:backward( -- Yarin: do we need model.noise_x[i+1]?
       {x, y, s, model.noise_xe[i], model.noise_i, model.noise_h, model.noise_o},
       {derr, model.ds})[3]
-    g_replace_table(model.ds, tmp)
+    copy_table(model.ds, tmp) --g_replace_table
     cutorch.synchronize()
   end
   state.pos = state.pos + params.seq_length
