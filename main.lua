@@ -621,9 +621,9 @@ function main()
       train_accs[#train_accs + 1] = state_train.acc
       total_cases = 0
       start_time = torch.tic()
-      show_predictions(state_train)
-      show_predictions(state_val)
-      show_predictions(state_test)
+--      show_predictions(state_train)
+--      show_predictions(state_val)
+--      show_predictions(state_test)
     end
     if step % 33 == 0 then
       collectgarbage()
