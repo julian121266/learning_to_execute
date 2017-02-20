@@ -38,7 +38,7 @@ end
 require('nngraph')
 require('base')
 
-local state_train, state_valid, state_test
+--local state_train, state_valid, state_test
 local model = {}
 local paramx, paramdx
 
@@ -156,35 +156,6 @@ function create_network()
   return transfer_data(module)
 end
 
---function create_network()
---  local x                = nn.Identity()()
---  local y                = nn.Identity()()
---  local prev_s           = nn.Identity()()
---  local i                = {[0] = Embedding(symbolsManager.vocab_size,
---                                            params.rnn_size)(x)}
---  local next_s           = {}
---  local splitted         = {prev_s:split(2 * params.layers)}
---  for layer_idx = 1, params.layers do
---    local prev_c         = splitted[2 * layer_idx - 1]
---    local prev_h         = splitted[2 * layer_idx]
---    local dropped        = nn.Dropout()(i[layer_idx - 1])
---    local next_c, next_h = lstm(dropped, prev_c, prev_h)
---    table.insert(next_s, next_c)
---    table.insert(next_s, next_h)
---    i[layer_idx] = next_h
---  end
---  local h2y              = nn.Linear(params.rnn_size, symbolsManager.vocab_size)
---  local pred             = nn.LogSoftMax()(h2y(i[params.layers]))
---  local err              = MaskedLoss()({pred, y})
---  local module           = nn.gModule({x, y, prev_s},
---                                      {err, nn.Identity()(next_s)})
---  module:getParameters():uniform(-params.init_weight, params.init_weight)
---  if params.gpuidx > 0 then
---    return module:cuda()
---  else
---    return module
---  end
---end
 
 function setup()
   print("Creating an RHN network.")
