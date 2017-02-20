@@ -38,6 +38,10 @@ end
 require('nngraph')
 require('base')
 
+local state_train, state_valid, state_test
+local model = {}
+local paramx, paramdx
+
 
 function rhn(x, prev_c, prev_h, noise_i, noise_h)
   -- Reshape to (batch_size, n_gates, hid_size)
