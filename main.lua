@@ -461,7 +461,7 @@ function show_predictions(state)
     if params.gpuidx > 0 then
       cutorch.synchronize()
     end
-    copy_table(model.s[0], states) -- tmp instead of states before
+    copy_table(model.s[0], tmp)
     local current_x = state.data.x[state.pos][batch_idx]
     input[sample_idx] = input[sample_idx] ..
                         symbolsManager.idx2symbol[current_x]
