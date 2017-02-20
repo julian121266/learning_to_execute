@@ -451,13 +451,13 @@ function show_predictions(state)
   local batch_idx = random(params.batch_size)
   for i = 1, state.data.x:size(1) - 1 do
 --    tmp, model.s[i] = unpack(
-    local tmp, states = unpack(model.rnns[1]:forward({state.data.x[state.pos],
+    local tmp = model.rnns[1]:forward({state.data.x[state.pos], --  states = unpack(
                                               state.data.y[state.pos + 1],
                                               model.s[0],
                                               model.noise_xe[i],
                                               model.noise_i,
                                               model.noise_h,
-                                              model.noise_o})[2])
+                                              model.noise_o})[2]
     if params.gpuidx > 0 then
       cutorch.synchronize()
     end
